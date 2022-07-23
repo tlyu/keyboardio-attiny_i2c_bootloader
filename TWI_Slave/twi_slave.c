@@ -238,6 +238,13 @@ void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
 
 
 void process_page_erase() {
+    uint16_t addr = BOOT_PAGE_ADDRESS - PAGE_SIZE;
+    while (addr > 0) {
+        boot_spm_busy_wait();
+        boot_page_erase(addr);
+        addr -= PAGE_SIZE;
+    }
+
     erase_page_buffer();
 
     // read the reset vector
@@ -247,14 +254,6 @@ void process_page_erase() {
     boot_page_erase(0); // have to erase the first page or else it will not write correctly
 
     unsafe_update_page(0); // restore just the initial vector
-
-    uint16_t addr = PAGE_SIZE;
-
-    while (addr < BOOT_PAGE_ADDRESS) {
-        boot_spm_busy_wait();
-        boot_page_erase(addr);
-        addr += PAGE_SIZE;
-    }
 }
 
 void process_getcrc16() {
