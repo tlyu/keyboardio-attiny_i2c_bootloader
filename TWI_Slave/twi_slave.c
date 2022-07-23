@@ -269,11 +269,12 @@ void process_getcrc16() {
         return;
     }
 
-    sendCrc16 = 0xffff;
+    uint16_t crc = 0xffff;
     while (addr < max) {
-        sendCrc16 = _crc16_update(sendCrc16, pgm_read_byte(addr));
+        crc = _crc16_update(crc, pgm_read_byte(addr));
         addr++;
     }
+    sendCrc16 = crc;
 }
 
 void transmit_crc16_and_version() {
