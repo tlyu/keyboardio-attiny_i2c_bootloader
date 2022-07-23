@@ -34,8 +34,11 @@ struct recv_result {
 #define crcHi GPIOR2
 #define crcLo GPIOR1
 
-// which frame of the page we are processing
-#define frame GPIOR0
+#if PAGE_SIZE > 256
+#error update this offset optimization for larger PAGE_SIZE
+#endif
+// offset into the page we are processing
+#define pageOffset GPIOR0
 
 void setup_pins() {
 
@@ -167,7 +170,7 @@ void __attribute__ ((noinline)) erase_page_buffer() {
 
 
 void process_read_address() {
-    frame = 0; // reset which frame we are reading
+    pageOffset = 0; // reset offset into the page we are reading
 
     erase_page_buffer();
 
@@ -185,12 +188,7 @@ uint8_t process_read_frame() {
         return 0;
     }
 
-#if PAGE_SIZE > 256
-#error update this offset optimization for larger PAGE_SIZE
-#endif
-
-    uint8_t offset = frame * FRAME_SIZE;
-    uint8_t *bufferPtr = &pageBuffer[offset];
+    uint8_t *bufferPtr = &pageBuffer[pageOffset];
 
     // Receive page data in frame-sized chunks
     uint16_t crc16 = 0xffff;
@@ -207,7 +205,7 @@ uint8_t process_read_frame() {
     if (crc16 != slave_receive_word()) {
         return 0;
     }
-    frame++;
+    pageOffset += FRAME_SIZE;
     return 1;
 }
 
@@ -318,7 +316,7 @@ void process_slave_receive() {
             send_transmit_error();
             break;
         }
-        if (frame == PAGE_SIZE / FRAME_SIZE) {
+        if (pageOffset == PAGE_SIZE) {
             process_page_update();
         }
         send_transmit_success();
