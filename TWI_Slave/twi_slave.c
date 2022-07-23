@@ -27,9 +27,13 @@ struct recv_result {
 
 // globals
 
-// reuse pageAddr variable for CRC16 to save space
-uint16_t pageAddr;
-#define sendCrc16 pageAddr
+// Page address, in GPIO registers to save code space
+#define pageHi GPIOR2
+#define pageLo GPIOR1
+// CRC16, reusing same GPIO registers as page address, because no overlap
+#define crcHi GPIOR2
+#define crcLo GPIOR1
+
 // which frame of the page we are processing
 #define frame GPIOR0
 
@@ -168,7 +172,9 @@ void process_read_address() {
     erase_page_buffer();
 
     // Receive two-byte page address.
-    pageAddr = slave_receive_word();
+    uint16_t pageAddr = slave_receive_word();
+    pageLo = pageAddr & 0xff;
+    pageHi = pageAddr >> 8;
 }
 
 uint8_t process_read_frame() {
@@ -207,7 +213,7 @@ uint8_t process_read_frame() {
 
 // Now program if everything went well.
 void process_page_update() {
-    update_page(pageAddr);
+    update_page((pageHi << 8) | pageLo);
 }
 
 void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
@@ -274,14 +280,15 @@ void process_getcrc16() {
         crc = _crc16_update(crc, pgm_read_byte(addr));
         addr++;
     }
-    sendCrc16 = crc;
+    crcLo = crc & 0xff;
+    crcHi = crc >> 8;
 }
 
 void transmit_crc16_and_version() {
     // write the version, then crc16, lo first, then hi
     process_slave_transmit(BVERSION);
-    process_slave_transmit(sendCrc16 & 0xff);
-    process_slave_transmit(sendCrc16 >> 8);
+    process_slave_transmit(crcLo);
+    process_slave_transmit(crcHi);
 }
 
 void send_transmit_success() {
@@ -308,7 +315,7 @@ void process_slave_receive() {
         process_read_address();
         break;
     case TWI_CMD_PAGEUPDATE_FRAME:
-        if (!process_read_frame(&pageAddr)) {
+        if (!process_read_frame()) {
             send_transmit_error();
             break;
         }
