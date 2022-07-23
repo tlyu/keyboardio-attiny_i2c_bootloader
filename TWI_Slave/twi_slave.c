@@ -349,9 +349,6 @@ void read_and_process_packet() {
 
     wait_for_activity(ACK);
 
-    // Set WDT max for command timeout once we're addressed
-    wdt_enable(WDTO_8S);
-
     // Check TWI status code for SLA+W or SLA+R.
     switch (TWSR) {
     case TW_SR_SLA_ACK:
