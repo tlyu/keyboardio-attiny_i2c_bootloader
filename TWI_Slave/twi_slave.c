@@ -164,18 +164,9 @@ void update_page(uint16_t pageAddress) {
     unsafe_update_page(pageAddress);
 }
 
-void __attribute__ ((noinline)) erase_page_buffer() {
-    // clear the page buffer
-    for (uint8_t i = 0; i < PAGE_SIZE; i++) {
-        pageBuffer[i] = 0xFF;
-    }
-}
-
 
 void process_read_address() {
     pageOffset = 0; // reset offset into the page we are reading
-
-    erase_page_buffer();
 
     // Receive two-byte page address.
     uint16_t pageAddr = slave_receive_word();
@@ -239,22 +230,17 @@ void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
 
 
 void process_page_erase() {
-    uint16_t addr = BOOT_PAGE_ADDRESS - PAGE_SIZE;
+    uint16_t addr = BOOT_PAGE_ADDRESS;
     while (addr > 0) {
+        addr -= PAGE_SIZE;
         boot_spm_busy_wait();
         boot_page_erase(addr);
-        addr -= PAGE_SIZE;
     }
 
-    erase_page_buffer();
-
-    // read the reset vector
-    buffer_reset_vector();
-
     boot_spm_busy_wait();
-    boot_page_erase(0); // have to erase the first page or else it will not write correctly
-
-    unsafe_update_page(0); // restore just the initial vector
+    boot_page_fill(0, RJMP_OP(BOOT_PAGE_ADDRESS));
+    boot_spm_busy_wait();
+    boot_page_write(0);
 }
 
 void process_getcrc16() {
