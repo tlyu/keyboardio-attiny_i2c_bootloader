@@ -5,7 +5,6 @@
 #include <util/crc16.h>
 #include <util/delay.h>
 #include <util/twi.h>
-#include <string.h>
 
 #include "common_define.h"
 
@@ -130,31 +129,14 @@ uint16_t slave_receive_word() {
 
 // don't call this, call update_page unless you need to bypass safety checks
 void __attribute__ ((noinline)) unsafe_update_page(uint16_t pageAddress) {
-    for (uint8_t i = 0; i < PAGE_SIZE; i += 2) {
-        uint16_t tempWord;
-        memcpy(&tempWord, &pageBuffer[i], sizeof(tempWord));
-        boot_spm_busy_wait();
-        boot_page_fill(pageAddress + i, tempWord); // Fill the temporary buffer with the given data
-    }
-
     // Write page from temporary buffer to the given location in flash memory
     boot_spm_busy_wait();
     boot_page_write(pageAddress);
 }
 
-void buffer_reset_vector() {
-    // Rewrite reset vector to point at bootloader.
-    uint16_t v = RJMP_OP(BOOT_PAGE_ADDRESS);
-    memcpy(pageBuffer, &v, sizeof(v));
-}
-
 void update_page(uint16_t pageAddress) {
     // Mask out in-page address bits.
     pageAddress &= ~(PAGE_SIZE - 1);
-    // Protect RESET vector if this is page 0.
-    if (pageAddress == INTVECT_PAGE_ADDRESS) {
-        buffer_reset_vector();
-    }
 
     // Ignore any attempt to update boot section.
     if (pageAddress >= BOOT_PAGE_ADDRESS) {
@@ -182,18 +164,19 @@ uint8_t process_read_frame() {
         return 0;
     }
 
-    uint8_t *bufferPtr = &pageBuffer[pageOffset];
-
+    uint8_t is_intvect = ((pageHi << 8) | pageLo) == INTVECT_PAGE_ADDRESS;
     // Receive page data in frame-sized chunks
     uint16_t crc16 = 0xffff;
-    for (uint8_t i = 0; i < FRAME_SIZE; i++) {
-        struct recv_result r = slave_receive_byte(ACK);
-        *bufferPtr = r.val;
-        if (!r.res) {
-            return 0;
+    for (uint8_t i = 0; i < FRAME_SIZE; i += 2) {
+        uint16_t w = slave_receive_word();
+        boot_spm_busy_wait();
+        if (is_intvect && pageOffset == 0 && i == 0) {
+            boot_page_fill(pageOffset, RJMP_OP(BOOT_PAGE_ADDRESS));
+        } else {
+            boot_page_fill(pageOffset + i, w);
         }
-        crc16 = _crc16_update(crc16, r.val);
-        bufferPtr++;
+        crc16 = _crc16_update(crc16, w & 0xff);
+        crc16 = _crc16_update(crc16, w >> 8);
     }
     // check received CRC16
     if (crc16 != slave_receive_word()) {
@@ -239,8 +222,7 @@ void process_page_erase() {
 
     boot_spm_busy_wait();
     boot_page_fill(0, RJMP_OP(BOOT_PAGE_ADDRESS));
-    boot_spm_busy_wait();
-    boot_page_write(0);
+    unsafe_update_page(0);
 }
 
 void process_getcrc16() {
