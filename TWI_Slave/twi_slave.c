@@ -9,6 +9,9 @@
 
 #include "common_define.h"
 
+// RJMP opcode with byte offset target
+#define RJMP_OP(addr) (0xc000 | (((addr) >> 1) - 1))
+
 // AD01: lower two bits of device address
 #define AD01 (PINB & (_BV(0) | _BV(1)))
 
@@ -140,8 +143,8 @@ void __attribute__ ((noinline)) unsafe_update_page(uint16_t pageAddress) {
 }
 
 void buffer_reset_vector() {
-    // Load existing RESET vector contents into buffer.
-    uint32_t v = pgm_read_dword(INTVECT_PAGE_ADDRESS);
+    // Rewrite reset vector to point at bootloader.
+    uint16_t v = RJMP_OP(BOOT_PAGE_ADDRESS);
     memcpy(pageBuffer, &v, sizeof(v));
 }
 
