@@ -146,6 +146,10 @@ void update_page(uint16_t pageAddress) {
     unsafe_update_page(pageAddress);
 }
 
+void __attribute__ ((noinline)) page_fill(uint16_t addr, uint16_t word) {
+    boot_spm_busy_wait();
+    boot_page_fill(addr, word);
+}
 
 void process_read_address() {
     pageOffset = 0; // reset offset into the page we are reading
@@ -174,8 +178,7 @@ uint8_t process_read_frame() {
         if (is_intvect && pageOffset == 0 && i == 0) {
             w = RJMP_OP(BOOT_PAGE_ADDRESS);
         }
-        boot_spm_busy_wait();
-        boot_page_fill(pageOffset + i, w);
+        page_fill(pageOffset + i, w);
     }
     // check received CRC16
     if (crc16 != slave_receive_word()) {
@@ -219,8 +222,7 @@ void process_page_erase() {
         boot_page_erase(addr);
     }
 
-    boot_spm_busy_wait();
-    boot_page_fill(0, RJMP_OP(BOOT_PAGE_ADDRESS));
+    page_fill(0, RJMP_OP(BOOT_PAGE_ADDRESS));
     unsafe_update_page(0);
 }
 
