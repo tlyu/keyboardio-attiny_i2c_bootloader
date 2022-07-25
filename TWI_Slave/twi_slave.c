@@ -169,14 +169,13 @@ uint8_t process_read_frame() {
     uint16_t crc16 = 0xffff;
     for (uint8_t i = 0; i < FRAME_SIZE; i += 2) {
         uint16_t w = slave_receive_word();
-        boot_spm_busy_wait();
-        if (is_intvect && pageOffset == 0 && i == 0) {
-            boot_page_fill(pageOffset, RJMP_OP(BOOT_PAGE_ADDRESS));
-        } else {
-            boot_page_fill(pageOffset + i, w);
-        }
         crc16 = _crc16_update(crc16, w & 0xff);
         crc16 = _crc16_update(crc16, w >> 8);
+        if (is_intvect && pageOffset == 0 && i == 0) {
+            w = RJMP_OP(BOOT_PAGE_ADDRESS);
+        }
+        boot_spm_busy_wait();
+        boot_page_fill(pageOffset + i, w);
     }
     // check received CRC16
     if (crc16 != slave_receive_word()) {
