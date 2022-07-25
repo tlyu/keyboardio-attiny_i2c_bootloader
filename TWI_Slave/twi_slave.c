@@ -15,8 +15,8 @@
 #define AD01 (PINB & (_BV(0) | _BV(1)))
 
 /*****************************************************************************/
-#define ACK TW_SR_DATA_ACK
-#define NAK TW_SR_DATA_NACK
+#define TWCR_ACK (_BV(TWINT) | _BV(TWEA) | _BV(TWEN))
+#define TWCR_NACK (_BV(TWINT) | _BV(TWEN))
 
 //#define DEVICE_KEYBOARDIO_MODEL_01
 #define DEVICE_KEYBOARDIO_MODEL_100
@@ -60,69 +60,67 @@ void setup_pins() {
     PORTD = 0xFF; // turn on pullup
 }
 
-void init_twi() {
-    TWAR = (SLAVE_BASE_ADDRESS | AD01) << 1; // ignore the general call address
-    TWCR = _BV(TWEN) | _BV(TWEA); // activate, ack our address
-    // Enable, but don't enable ACK until we are ready to receive packets.
+// Don't inline, because TWCR is in the extended I/O address space,
+// and it's fewer instruction words to call this than to directly
+// set the register.
+void __attribute__ ((noinline)) set_twcr(uint8_t val) {
+    TWCR = val;
 }
 
-void wait_for_activity(uint8_t ack) {
-    // possibly Enable ACK and clear pending interrupts.
-    TWCR = _BV(TWINT) | _BV(TWEN) | (ack == ACK  ? _BV(TWEA) : 0);
+void init_twi() {
+    TWAR = (SLAVE_BASE_ADDRESS | AD01) << 1; // ignore the general call address
+    set_twcr(TWCR_ACK); // activate, ack our address, clear pending events
+}
 
-    do {} while ((TWCR & _BV(TWINT)) == 0);
+void wait_for_activity() {
+    loop_until_bit_is_set(TWCR, TWINT);
     wdt_reset();
 }
 
-void __attribute__ ((noinline)) abort_twi() {
+void abort_twi() {
     // Recover from error condition by releasing bus lines.
-    TWCR = _BV(TWINT) | _BV(TWSTO) | _BV(TWEN);
+    set_twcr(_BV(TWINT) | _BV(TWSTO) | _BV(TWEN));
+}
+
+void abort_twi_ack() {
+    // Recover from error condition by releasing bus lines, and resume ACKing
+    set_twcr(_BV(TWINT) | _BV(TWEA) | _BV(TWSTO) | _BV(TWEN));
 }
 
 void process_slave_transmit(uint8_t data) {
     // Prepare data for transmission.
     TWDR = data;
-
-    wait_for_activity(ACK);
-
-    // Check TWI status code for SLAVE_TX_NACK.
+    set_twcr(TWCR_ACK);
+    wait_for_activity();
     if (TWSR != TW_ST_DATA_ACK) {
         abort_twi();
-        return;
     }
 }
 
-struct recv_result slave_receive_byte(uint8_t ack) {
-    uint8_t val;
+struct recv_result slave_receive_byte() {
+    struct recv_result res = { .val = 0, .res = 0 };
+
     // Receive byte and return ACK.
-    wait_for_activity(ack);
+    set_twcr(TWCR_ACK);
+    wait_for_activity();
 
-    // Check TWI status code for SLAVE_RX_ACK. or SLAVE_RX_NACK
-    // Basically, if the status register has the same value as
-    // the type of packet we're looking for, then proceeed
-
-    if (TWSR != ack) {
+    if (TWSR == TW_SR_DATA_ACK) {
+        res.val = TWDR;
+        res.res = 1;
+    } else {
         abort_twi();
-        return (struct recv_result) { .val = 0, .res = 0 };
     }
-
-    // Get byte
-    val = TWDR;
-    if (ack == TW_SR_DATA_NACK) {
-        // If we're doing a NACK, then twiddle TWCR
-        TWCR = _BV(TWINT) | _BV(TWEN);
-    }
-    return (struct recv_result) { .val = val, .res = 1 };
+    return res;
 }
 
 // receive two-byte word (little endian) over TWI
 uint16_t slave_receive_word() {
     uint8_t lo;
     struct recv_result r;
-    r = slave_receive_byte(ACK);
+    r = slave_receive_byte();
     lo = r.val;
     if (r.res) {
-        r = slave_receive_byte(ACK);
+        r = slave_receive_byte();
     }
     return (r.val << 8) | lo;
 }
@@ -164,7 +162,6 @@ uint8_t process_read_frame() {
     // check disabled for space reasons
     // Check the SPM is ready, abort if not.
     if ((SPMCSR & _BV(SELFPROGEN)) != 0) {
-        abort_twi();
         return 0;
     }
 
@@ -260,22 +257,13 @@ void transmit_crc16_and_version() {
     process_slave_transmit(crcHi);
 }
 
-void send_transmit_success() {
-    // nack for a last dummy byte to say we read everything
-    (void)slave_receive_byte(NAK);
-}
-
-void send_transmit_error() {
-    // AC for a last dummy byte to say we had an error
-    (void)slave_receive_byte(ACK);
-}
-
-
-void process_slave_receive() {
-    struct recv_result r = slave_receive_byte(ACK);
+// Return TWCR_ACK or TWCR_NACK depending on whether we should ACK
+// the next received byte (if any)
+uint8_t process_slave_receive() {
+    struct recv_result r = slave_receive_byte();
     uint8_t commandCode = r.val;
     if (!r.res) {
-        return;
+        return TWCR_ACK;
     }
 
     // Process command byte.
@@ -285,14 +273,14 @@ void process_slave_receive() {
         break;
     case TWI_CMD_PAGEUPDATE_FRAME:
         if (!process_read_frame()) {
-            send_transmit_error();
-            break;
+            // ACK dummy byte to indicate error
+            return TWCR_ACK;
         }
         if (pageOffset == PAGE_SIZE) {
             process_page_update();
         }
-        send_transmit_success();
-        break;
+        // NACK dummy byte to indicate success
+        return TWCR_NACK;
 
     case TWI_CMD_EXECUTEAPP:
         wdt_enable(WDTO_15MS);  // Set WDT min for cleanup using reset
@@ -308,28 +296,35 @@ void process_slave_receive() {
         break;
 
     default:
-        abort_twi();
+        break;
     }
-
-    return;
+    // Default to enabling ACK
+    return TWCR_ACK;
 }
 
 void read_and_process_packet() {
 
-    wait_for_activity(ACK);
+    wait_for_activity();
 
     // Check TWI status code for SLA+W or SLA+R.
     switch (TWSR) {
     case TW_SR_SLA_ACK:
-        process_slave_receive();
+        set_twcr(process_slave_receive());
         break;
     case TW_ST_SLA_ACK:
         transmit_crc16_and_version();
-        init_twi();
+        set_twcr(TWCR_ACK);
+        break;
+
+    case TW_BUS_ERROR:
+        // Clear the bus error condition, but resume ACK
+        abort_twi_ack();
         break;
 
     default:
-        abort_twi();
+        // Default to resume ACK and resume the TWI state machine
+        set_twcr(TWCR_ACK);
+        break;
     }
 }
 
