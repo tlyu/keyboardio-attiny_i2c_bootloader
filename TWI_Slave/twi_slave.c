@@ -37,10 +37,8 @@ struct recv_result {
 #define crcLo GPIOR1
 
 #if PAGE_SIZE > 256
-#error update this offset optimization for larger PAGE_SIZE
+#error adjust offset optimizations for larger PAGE_SIZE
 #endif
-// offset into the page we are processing
-#define pageOffset GPIOR0
 
 void setup_pins() {
 
@@ -133,9 +131,6 @@ void __attribute__ ((noinline)) unsafe_update_page(uint16_t pageAddress) {
 }
 
 void update_page(uint16_t pageAddress) {
-    // Mask out in-page address bits.
-    pageAddress &= ~(PAGE_SIZE - 1);
-
     // Ignore any attempt to update boot section.
     if (pageAddress >= BOOT_PAGE_ADDRESS) {
         return;
@@ -150,10 +145,11 @@ void __attribute__ ((noinline)) page_fill(uint16_t addr, uint16_t word) {
 }
 
 void process_read_address() {
-    pageOffset = 0; // reset offset into the page we are reading
-
     // Receive two-byte page address.
     uint16_t pageAddr = slave_receive_word();
+
+    // Mask out in-page address bits.
+    pageAddr &= ~(PAGE_SIZE - 1);
     pageLo = pageAddr & 0xff;
     pageHi = pageAddr >> 8;
 }
@@ -165,29 +161,30 @@ uint8_t process_read_frame() {
         return 0;
     }
 
-    uint8_t is_intvect = ((pageHi << 8) | pageLo) == INTVECT_PAGE_ADDRESS;
+    uint16_t addr = (pageHi << 8) | pageLo;
     // Receive page data in frame-sized chunks
     uint16_t crc16 = 0xffff;
     for (uint8_t i = 0; i < FRAME_SIZE; i += 2) {
         uint16_t w = slave_receive_word();
         crc16 = _crc16_update(crc16, w & 0xff);
         crc16 = _crc16_update(crc16, w >> 8);
-        if (is_intvect && pageOffset == 0 && i == 0) {
+        if (addr == INTVECT_PAGE_ADDRESS) {
             w = RJMP_OP(BOOT_PAGE_ADDRESS);
         }
-        page_fill(pageOffset + i, w);
+        page_fill(addr, w);
+        addr += 2;
     }
     // check received CRC16
     if (crc16 != slave_receive_word()) {
         return 0;
     }
-    pageOffset += FRAME_SIZE;
+    pageLo = addr & 0xff;
+    pageHi = addr >> 8;
+    if ((addr % PAGE_SIZE) == 0) {
+        // Program page, first undoing increments done by page load
+        update_page(addr - PAGE_SIZE);
+    }
     return 1;
-}
-
-// Now program if everything went well.
-void process_page_update() {
-    update_page((pageHi << 8) | pageLo);
 }
 
 void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
@@ -275,9 +272,6 @@ uint8_t process_slave_receive() {
         if (!process_read_frame()) {
             // ACK dummy byte to indicate error
             return TWCR_ACK;
-        }
-        if (pageOffset == PAGE_SIZE) {
-            process_page_update();
         }
         // NACK dummy byte to indicate success
         return TWCR_NACK;
