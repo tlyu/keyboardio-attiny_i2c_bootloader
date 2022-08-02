@@ -40,24 +40,6 @@ struct recv_result {
 #error adjust offset optimizations for larger PAGE_SIZE
 #endif
 
-void setup_pins() {
-
-#if defined DEVICE_KEYBOARDIO_MODEL_01
-    DDRC |= _BV(7); // C7 is COMM_EN - this turns on the PCA9614 that does differential i2c between hands
-    PORTC |= _BV(7); // Without it, the right hand can't talk to the world.
-
-    DDRB = _BV(5)|_BV(3)|_BV(2); //0b00101100;
-    PORTB &= ~(_BV(5)|_BV(3)|_BV(2)); // Drive MOSI/SCK/SS low
-#endif
-
-    DDRC |= (_BV(3)); // set ROW3 to output
-    // We're going to use row 3, keys # 0 and 7 to force the keyboard to stay in bootloader mode
-    PORTC &= ~(_BV(3)); // Without it, we can't scan the keys
-
-    DDRD = 0x00; // make the col pins inputs
-    PORTD = 0xFF; // turn on pullup
-}
-
 // Don't inline, because TWCR is in the extended I/O address space,
 // and it's fewer instruction words to call this than to directly
 // set the register.
@@ -320,6 +302,24 @@ void read_and_process_packet() {
         set_twcr(TWCR_ACK);
         break;
     }
+}
+
+void setup_pins() {
+
+#if defined DEVICE_KEYBOARDIO_MODEL_01
+    DDRC |= _BV(7); // C7 is COMM_EN - this turns on the PCA9614 that does differential i2c between hands
+    PORTC |= _BV(7); // Without it, the right hand can't talk to the world.
+
+    DDRB = _BV(5)|_BV(3)|_BV(2); //0b00101100;
+    PORTB &= ~(_BV(5)|_BV(3)|_BV(2)); // Drive MOSI/SCK/SS low
+#endif
+
+    DDRC |= (_BV(3)); // set ROW3 to output
+    // We're going to use row 3, keys # 0 and 7 to force the keyboard to stay in bootloader mode
+    PORTC &= ~(_BV(3)); // Without it, we can't scan the keys
+
+    DDRD = 0x00; // make the col pins inputs
+    PORTD = 0xFF; // turn on pullup
 }
 
 #if defined DEVICE_KEYBOARDIO_MODEL_01
