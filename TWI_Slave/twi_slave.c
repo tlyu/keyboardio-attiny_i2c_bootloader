@@ -7,6 +7,7 @@
 #include <util/twi.h>
 
 #include "common_define.h"
+#include "wdt_nointr.h"
 
 // RJMP opcode with byte offset target
 #define RJMP_OP(addr) (0xc000 | (((addr) >> 1) - 1))
@@ -170,7 +171,7 @@ uint8_t process_read_frame() {
 }
 
 void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
-    wdt_disable(); // After Reset the WDT state does not change
+    wdt_disable_nointr(); // After Reset the WDT state does not change
 
 #if defined DEVICE_KEYBOARDIO_MODEL_01
 
@@ -259,7 +260,7 @@ uint8_t process_slave_receive() {
         return TWCR_NACK;
 
     case TWI_CMD_EXECUTEAPP:
-        wdt_enable(WDTO_15MS);  // Set WDT min for cleanup using reset
+        wdt_enable_nointr(WDTO_15MS);  // Set WDT min for cleanup using reset
         asm volatile ("1: rjmp 1b"); // Loop until WDT reset kicks in
         __builtin_unreachable();
     // fall through
@@ -361,7 +362,7 @@ int main() {
     // be reset to 15ms. Immediately clear WDRF and update WDT
     // configuration, to avoid reset loops.
     MCUSR = 0;
-    wdt_enable(WDTO_8S);
+    wdt_enable_nointr(WDTO_8S);
     setup_pins();
 
 #if defined DEVICE_KEYBOARDIO_MODEL_01

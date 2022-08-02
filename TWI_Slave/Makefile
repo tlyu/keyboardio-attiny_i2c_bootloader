@@ -134,3 +134,6 @@ cpp:
 astyle:
 	find . -type f -name \*.c |xargs -n 1 astyle --style=google
 	find . -type f -name \*.h |xargs -n 1 astyle --style=google
+
+# Dependencies
+twi_slave.o: wdt_nointr.h
