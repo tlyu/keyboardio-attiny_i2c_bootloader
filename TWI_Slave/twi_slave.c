@@ -1,4 +1,3 @@
-#include <avr/boot.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
 #include <avr/wdt.h>
@@ -7,6 +6,7 @@
 #include <util/twi.h>
 
 #include "common_define.h"
+#include "spm_tiny.h"
 #include "wdt_nointr.h"
 
 // RJMP opcode with byte offset target
@@ -106,25 +106,12 @@ uint16_t slave_receive_word() {
     return (r.val << 8) | lo;
 }
 
-// don't call this, call update_page unless you need to bypass safety checks
-void __attribute__ ((noinline)) unsafe_update_page(uint16_t pageAddress) {
-    // Write page from temporary buffer to the given location in flash memory
-    boot_spm_busy_wait();
-    boot_page_write(pageAddress);
-}
-
 void update_page(uint16_t pageAddress) {
     // Ignore any attempt to update boot section.
     if (pageAddress >= BOOT_PAGE_ADDRESS) {
         return;
     }
-
-    unsafe_update_page(pageAddress);
-}
-
-void __attribute__ ((noinline)) page_fill(uint16_t addr, uint16_t word) {
-    boot_spm_busy_wait();
-    boot_page_fill(addr, word);
+    tspm_page_write(pageAddress);
 }
 
 void process_read_address() {
@@ -154,7 +141,7 @@ uint8_t process_read_frame() {
         if (addr == INTVECT_PAGE_ADDRESS) {
             w = RJMP_OP(BOOT_PAGE_ADDRESS);
         }
-        page_fill(addr, w);
+        tspm_page_fill(addr, w);
         addr += 2;
     }
     // check received CRC16
@@ -195,12 +182,10 @@ void process_page_erase() {
     uint16_t addr = BOOT_PAGE_ADDRESS;
     while (addr > 0) {
         addr -= PAGE_SIZE;
-        boot_spm_busy_wait();
-        boot_page_erase(addr);
+        tspm_page_erase(addr);
     }
-
-    page_fill(0, RJMP_OP(BOOT_PAGE_ADDRESS));
-    unsafe_update_page(0);
+    tspm_page_fill(0, RJMP_OP(BOOT_PAGE_ADDRESS));
+    tspm_page_write(0);
 }
 
 void process_getcrc16() {

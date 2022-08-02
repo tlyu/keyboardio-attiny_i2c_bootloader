@@ -137,3 +137,4 @@ astyle:
 
 # Dependencies
 twi_slave.o: wdt_nointr.h
+twi_slave.o: spm_tiny.h
