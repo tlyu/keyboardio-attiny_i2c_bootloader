@@ -310,16 +310,16 @@ void setup_pins() {
     DDRC |= _BV(7); // C7 is COMM_EN - this turns on the PCA9614 that does differential i2c between hands
     PORTC |= _BV(7); // Without it, the right hand can't talk to the world.
 
-    DDRB = _BV(5)|_BV(3)|_BV(2); //0b00101100;
-    PORTB &= ~(_BV(5)|_BV(3)|_BV(2)); // Drive MOSI/SCK/SS low
+    DDRB = _BV(5) | _BV(3) | _BV(2); // Set SCK/MOSI/SS as outputs
+    // No need to explicitly set them low; reset has done that
 #endif
 
+    // We check keys at Row 3, Columns 0 and 7 to trigger bootloader mode
     DDRC |= (_BV(3)); // set ROW3 to output
-    // We're going to use row 3, keys # 0 and 7 to force the keyboard to stay in bootloader mode
-    PORTC &= ~(_BV(3)); // Without it, we can't scan the keys
+    // No need to explicitly set it low; reset has done that
 
-    DDRD = 0x00; // make the col pins inputs
-    PORTD = 0xFF; // turn on pullup
+    // No need to explicitly clear DDRD; reset has done that
+    PORTD = 0xFF; // turn on pullup on column pins
 }
 
 #if defined DEVICE_KEYBOARDIO_MODEL_01
@@ -333,7 +333,7 @@ void __attribute__ ((noinline)) spi_send_bytes(uint8_t val, uint8_t n) {
 }
 
 void init_spi_for_led_control() {
-    SPCR = _BV(SPE) | _BV(MSTR) | _BV(SPIE) | _BV(SPR0);
+    SPCR = _BV(SPE) | _BV(MSTR) | _BV(SPR0);
     SPSR = _BV(SPI2X);
 
 #define NUM_LEDS 32
