@@ -152,7 +152,7 @@ uint8_t process_read_frame() {
         return 0;
     }
     page_addr = addr;
-    if ((addr % PAGE_SIZE) == 0) {
+    if (((uint8_t)addr % PAGE_SIZE) == 0) {
         // Program page, first undoing increments done by page load
         update_page(addr - PAGE_SIZE);
     }
