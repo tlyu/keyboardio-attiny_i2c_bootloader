@@ -10,9 +10,6 @@
 #include "wdt_nointr.h"
 
 #define RJMP_OPCODE 0xc000
-#define RJMP_OP_MASK 0xf000
-// Test whether op is a RJMP instruction
-#define IS_RJMP_OP(op) (((op) & RJMP_OP_MASK) == RJMP_OPCODE)
 
 // RJMP opcode with byte offset target
 #define RJMP_OP(addr) (RJMP_OPCODE | (((addr) >> 1) - 1))
@@ -152,7 +149,7 @@ uint8_t process_read_frame() {
         crc16 = _crc16_update(crc16, w >> 8);
         if (addr == INTVECT_PAGE_ADDRESS) {
             // Save application reset vector, after validation
-            if (IS_RJMP_OP(w)) {
+            if (w < RJMP_BOOT) {
                 apprst = w;
             }
             // Overwrite reset vector with RJMP to bootloader
@@ -163,7 +160,7 @@ uint8_t process_read_frame() {
         }
         tspm_page_fill(addr, w);
         addr += 2;
-    } while ((addr % FRAME_SIZE) != 0);
+    } while (((uint8_t)addr % FRAME_SIZE) != 0);
     // check received CRC16
     if (crc16 != slave_receive_word()) {
         return 0;
@@ -177,21 +174,10 @@ uint8_t process_read_frame() {
 }
 
 void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
-    // Lie about the type because function pointers are word
-    // addresses, even after casting through (void *)
-    extern const PROGMEM char appint0[];
-
     wdt_disable_nointr(); // After Reset the WDT state does not change
-    // Check for unprogrammed high byte of INT0 vector
-    if (pgm_read_byte(&appint0[1]) == 0xff) {
-        // Unprogrammed; probably caught in mid-erase?
-        asm volatile ("rjmp __vectors");
-        __builtin_unreachable();
-    } else {
-        // Jump to relocated application reset vector
-        asm volatile ("rjmp appint0");
-        __builtin_unreachable();
-    }
+    // Jump to relocated application reset vector
+    asm volatile ("rjmp appint0");
+    __builtin_unreachable();
 }
 
 void process_page_erase() {
