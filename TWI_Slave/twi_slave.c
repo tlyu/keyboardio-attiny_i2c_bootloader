@@ -177,16 +177,19 @@ uint8_t process_read_frame() {
 }
 
 void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
+    // Lie about the type because function pointers are word
+    // addresses, even after casting through (void *)
+    extern const PROGMEM char appint0[];
+
     wdt_disable_nointr(); // After Reset the WDT state does not change
     // Check for unprogrammed high byte of INT0 vector
-    if (pgm_read_byte(0x0003) == 0xff) {
+    if (pgm_read_byte(&appint0[1]) == 0xff) {
         // Unprogrammed; probably caught in mid-erase?
         asm volatile ("rjmp __vectors");
         __builtin_unreachable();
     } else {
         // Jump to relocated application reset vector
-        asm volatile ("rjmp __vectors - %[bootpage] + 0x0002"
-		:: [bootpage] "i"(BOOT_PAGE_ADDRESS));
+        asm volatile ("rjmp appint0");
         __builtin_unreachable();
     }
 }
@@ -372,4 +375,39 @@ int main() {
         cleanup_and_run_application();
     }
 
+}
+
+/*
+ * Create a section for the application vectors.
+ *
+ * These are placeholder reset and interrupt vectors, in case someone
+ * wants to burn the bootloader into the ATtinys without loading any
+ * application code. It also avoids having to edit the .hex file to
+ * insert these vectors.
+ *
+ * Defining appint0 provides a symbolic RJMP target (application INT0
+ * vector, which contains the relocated application reset vector)
+ * when starting the application.
+ */
+static void
+__attribute__ ((section(".appvectors"), naked, used))
+appvectors(void) {
+// Abbreviations...
+#define vn "rjmp BOOT_ADDR"
+#define v vn "\n\t"
+    asm volatile(
+        // 2-byte alignment, for consistency with .text
+        ".balign 2\n\t"
+        // 0
+        vn "\n"
+        // RJMP target for application start
+        "appint0:\n\t"
+        // 1..9
+        v v v v v v v v v
+        // 10..19
+        v v v v v v v v v vn
+        : // no outputs
+    );
+#undef v
+#undef vn
 }
