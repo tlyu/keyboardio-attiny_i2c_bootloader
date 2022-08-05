@@ -30,12 +30,22 @@ struct recv_result {
 
 // globals
 
+// static assertion to check that GPIOR1 and GPIOR2 have sequential addresses
+// (Can't use _Static_assert because of address arithmetic.)
+static inline void staticassert_gpior12() {
+    char staticassert[(_SFR_ADDR(GPIOR2) - _SFR_ADDR(GPIOR1) == 1) ? 1 : -1];
+    (void)staticassert;
+}
+
 // Page address, in GPIO registers to save code space
-#define pageHi GPIOR2
-#define pageLo GPIOR1
+// Treating this as an I/O word allows for more efficient code generation than
+// using each byte separately
+#define page_addr _SFR_WORD(GPIOR1)
+
 // CRC16, reusing same GPIO registers as page address, because no overlap
-#define crcHi GPIOR2
-#define crcLo GPIOR1
+#define crc_hi GPIOR2
+#define crc_lo GPIOR1
+#define crc_val _SFR_WORD(GPIOR1)
 
 #if PAGE_SIZE > 256
 #error adjust offset optimizations for larger PAGE_SIZE
@@ -116,12 +126,11 @@ void update_page(uint16_t pageAddress) {
 
 void process_read_address() {
     // Receive two-byte page address.
-    uint16_t pageAddr = slave_receive_word();
+    uint16_t addr = slave_receive_word();
 
     // Mask out in-page address bits.
-    pageAddr &= ~(PAGE_SIZE - 1);
-    pageLo = pageAddr & 0xff;
-    pageHi = pageAddr >> 8;
+    addr &= ~(PAGE_SIZE - 1);
+    page_addr = addr;
 }
 
 uint8_t process_read_frame() {
@@ -131,7 +140,7 @@ uint8_t process_read_frame() {
         return 0;
     }
 
-    uint16_t addr = (pageHi << 8) | pageLo;
+    uint16_t addr = page_addr;
     // Receive page data in frame-sized chunks
     uint16_t crc16 = 0xffff;
     for (uint8_t i = 0; i < FRAME_SIZE; i += 2) {
@@ -148,8 +157,7 @@ uint8_t process_read_frame() {
     if (crc16 != slave_receive_word()) {
         return 0;
     }
-    pageLo = addr & 0xff;
-    pageHi = addr >> 8;
+    page_addr = addr;
     if ((addr % PAGE_SIZE) == 0) {
         // Program page, first undoing increments done by page load
         update_page(addr - PAGE_SIZE);
@@ -211,15 +219,14 @@ void process_getcrc16() {
         crc = _crc16_update(crc, pgm_read_byte(addr));
         addr++;
     }
-    crcLo = crc & 0xff;
-    crcHi = crc >> 8;
+    crc_val = crc;
 }
 
 void transmit_crc16_and_version() {
     // write the version, then crc16, lo first, then hi
     process_slave_transmit(BVERSION);
-    process_slave_transmit(crcLo);
-    process_slave_transmit(crcHi);
+    process_slave_transmit(crc_lo);
+    process_slave_transmit(crc_hi);
 }
 
 // Return TWCR_ACK or TWCR_NACK depending on whether we should ACK
