@@ -26,6 +26,9 @@ DEVICE     ?= attiny88
 # 8Mhz
 CLOCK      ?= 8000000
 
+# Bootloader address
+BOOT_ADDR  ?= 0x1c00
+
 # Add something like this to Makefile.local if you haven't yet set up ~/.avrduderc with a default programmer.
 # PROGRAMMER = -c usbtiny -P usb
 # PROGRAMMER = -c dragon_isp -P usb
@@ -47,26 +50,37 @@ GCC_PATH ?= avr-gcc
 # Optimize, but focus on keeping code size small
 OPTIMIZATION = -Os
 
+# Extra optimization flags
+EXTRA_OPT = -fcall-saved-r26 -fcall-saved-r27 -fcall-saved-r30 -fcall-saved-r31
+OPT_FLAGS = $(OPTIMIZATION) $(EXTRA_OPT)
 
+WARN_FLAGS = -Wall -Wextra -Werror -pedantic
+CPPFLAGS = -DF_CPU=$(CLOCK)
+CFLAGS = -ggdb -std=gnu11 -flto -mmcu=$(DEVICE) $(WARN_FLAGS) $(OPT_FLAGS)
+
+LDFLAGS = -Wl,-X -Wl,--section-start=.text=$(BOOT_ADDR) -Wl,--section-start=.appvectors=0x0
 
 AVRDUDE = $(AVRDUDE_PATH) $(PROGRAMMER) -p $(DEVICE)
-COMPILE = $(GCC_PATH) -fverbose-asm -g -Wall -Wextra -Werror -pedantic $(OPTIMIZATION) -std=gnu11 -flto -mmcu=$(DEVICE) -DF_CPU=$(CLOCK)  -Wl,--section-start=.text=0x1C00
+COMPILE_c = $(GCC_PATH) $(CFLAGS) $(CPPFLAGS) -c
+COMPILE_S = $(GCC_PATH) $(CFLAGS) $(CPPFLAGS) -x assembler-with-cpp -c
+COMPILE_cs = $(GCC_PATH) $(CFLAGS) $(CPPFLAGS) -S
+LINK = $(GCC_PATH) $(CFLAGS) $(LDFLAGS)
 
 # symbolic targets:
 all:	twi_slave.hex
 
 .c.o:
-	$(COMPILE) -c $< -o $@
+	$(COMPILE_c) $< -o $@
 
 .S.o:
-	$(COMPILE) -x assembler-with-cpp -c $< -o $@
+	$(COMPILE_S) $< -o $@
 # "-x assembler-with-cpp" should not be necessary since this is the default
 # file type for the .S (with capital S) extension. However, upper case
 # characters are not always preserved on Windows. To ensure WinAVR
 # compatibility define the file type manually.
 
 .c.s:
-	$(COMPILE) -S $< -o $@
+	$(COMPILE_cs) $< -o $@
 
 flash:	all
 	$(AVRDUDE) -B 2 -U flash:w:twi_slave.hex:i
@@ -86,7 +100,7 @@ clean:
 
 # file targets:
 twi_slave.elf: $(OBJECTS)
-	$(COMPILE) -o twi_slave.elf $(OBJECTS)
+	$(LINK) -o $@ $(OBJECTS)
 
 twi_slave.hex: twi_slave.elf
 	rm -f twi_slave.hex
@@ -136,5 +150,6 @@ astyle:
 	find . -type f -name \*.h |xargs -n 1 astyle --style=google
 
 # Dependencies
+$(OBJECTS): Makefile
 twi_slave.o: wdt_nointr.h
 twi_slave.o: spm_tiny.h
