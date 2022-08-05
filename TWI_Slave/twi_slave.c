@@ -164,13 +164,13 @@ void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
 
 #if defined DEVICE_KEYBOARDIO_MODEL_01
 
-    asm volatile ("rjmp __vectors-0x1bc8");  // jump to start of user code at 0x38
+    asm volatile ("rjmp main-0x1bc8");  // jump to start of user code at 0x38
 
 #elif defined DEVICE_KEYBOARDIO_MODEL_100
     // More precisely, this elif is about whether we're building with GCC5- or GCC7+
     // But the Model 01 MUST use GCC5- And we strongly recommend 7+ for everything else going forward
 
-    asm volatile ("rjmp __vectors-0x1bd8");  // jump to start of user code at 0x28 (0x1bd8 is 0x1c00 -0x28)
+    asm volatile ("rjmp main-0x1bd8");  // jump to start of user code at 0x28 (0x1bd8 is 0x1c00 -0x28)
     // On GCC5 and earlier with Keyboardio's TWI implementation,
     // this points to 0x1bc8 instead, which corresponds to 0x38.
 
@@ -333,8 +333,20 @@ void init_spi_for_led_control() {
 
 #endif
 
-// Main Starts from here
-int main() {
+/*
+ * nostartfiles setup:
+ *
+ * Place main() in .init9, so it goes before all other functions.
+ *
+ * Assumptions:
+ * - always starting directly from a reset
+ * - interrupts are disabled
+ * - r1 doesn't need to be cleared
+ * - stack pointer doesn't need to be initialized
+ * - all I/O registers are in their default states
+ */
+int __attribute__ ((section(".init9"), used))
+main() {
 
     // If a watchdog reset occurred (command timeout or TWI command to
     // start the application), the watchdog interval will likely

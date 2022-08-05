@@ -56,7 +56,7 @@ OPT_FLAGS = $(OPTIMIZATION) $(EXTRA_OPT)
 
 WARN_FLAGS = -Wall -Wextra -Werror -pedantic
 CPPFLAGS = -DF_CPU=$(CLOCK)
-CFLAGS = -ggdb -std=gnu11 -flto -mmcu=$(DEVICE) $(WARN_FLAGS) $(OPT_FLAGS)
+CFLAGS = -ggdb -std=gnu11 -flto -mmcu=$(DEVICE) $(WARN_FLAGS) $(OPT_FLAGS) -nostartfiles
 
 LDFLAGS = -Wl,-X -Wl,--section-start=.text=$(BOOT_ADDR) -Wl,--section-start=.appvectors=0x0
 
