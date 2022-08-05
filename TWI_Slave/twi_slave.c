@@ -9,8 +9,15 @@
 #include "spm_tiny.h"
 #include "wdt_nointr.h"
 
+#define RJMP_OPCODE 0xc000
+#define RJMP_OP_MASK 0xf000
+// Test whether op is a RJMP instruction
+#define IS_RJMP_OP(op) (((op) & RJMP_OP_MASK) == RJMP_OPCODE)
+
 // RJMP opcode with byte offset target
-#define RJMP_OP(addr) (0xc000 | (((addr) >> 1) - 1))
+#define RJMP_OP(addr) (RJMP_OPCODE | (((addr) >> 1) - 1))
+
+#define RJMP_BOOT RJMP_OP(BOOT_PAGE_ADDRESS)
 
 // AD01: lower two bits of device address
 #define AD01 (PINB & (_BV(0) | _BV(1)))
@@ -137,16 +144,26 @@ uint8_t process_read_frame() {
     uint16_t addr = page_addr;
     // Receive page data in frame-sized chunks
     uint16_t crc16 = 0xffff;
-    for (uint8_t i = 0; i < FRAME_SIZE; i += 2) {
+    // Default in case it's invalid
+    uint16_t apprst = RJMP_BOOT;
+    do {
         uint16_t w = slave_receive_word();
         crc16 = _crc16_update(crc16, w & 0xff);
         crc16 = _crc16_update(crc16, w >> 8);
         if (addr == INTVECT_PAGE_ADDRESS) {
-            w = RJMP_OP(BOOT_PAGE_ADDRESS);
+            // Save application reset vector, after validation
+            if (IS_RJMP_OP(w)) {
+                apprst = w;
+            }
+            // Overwrite reset vector with RJMP to bootloader
+            w = RJMP_BOOT;
+        } else if (addr == INTVECT_PAGE_ADDRESS + 2) {
+            // Adjust RJMP instruction for relocation
+            w = apprst - 1;
         }
         tspm_page_fill(addr, w);
         addr += 2;
-    }
+    } while ((addr % FRAME_SIZE) != 0);
     // check received CRC16
     if (crc16 != slave_receive_word()) {
         return 0;
@@ -161,24 +178,18 @@ uint8_t process_read_frame() {
 
 void __attribute__ ((noreturn)) cleanup_and_run_application(void) {
     wdt_disable_nointr(); // After Reset the WDT state does not change
-
-#if defined DEVICE_KEYBOARDIO_MODEL_01
-
-    asm volatile ("rjmp __vectors-0x1bc8");  // jump to start of user code at 0x38
-
-#elif defined DEVICE_KEYBOARDIO_MODEL_100
-    // More precisely, this elif is about whether we're building with GCC5- or GCC7+
-    // But the Model 01 MUST use GCC5- And we strongly recommend 7+ for everything else going forward
-
-    asm volatile ("rjmp __vectors-0x1bd8");  // jump to start of user code at 0x28 (0x1bd8 is 0x1c00 -0x28)
-    // On GCC5 and earlier with Keyboardio's TWI implementation,
-    // this points to 0x1bc8 instead, which corresponds to 0x38.
-
-#endif
-
-    __builtin_unreachable();
+    // Check for unprogrammed high byte of INT0 vector
+    if (pgm_read_byte(0x0003) == 0xff) {
+        // Unprogrammed; probably caught in mid-erase?
+        asm volatile ("rjmp __vectors");
+        __builtin_unreachable();
+    } else {
+        // Jump to relocated application reset vector
+        asm volatile ("rjmp __vectors - %[bootpage] + 0x0002"
+		:: [bootpage] "i"(BOOT_PAGE_ADDRESS));
+        __builtin_unreachable();
+    }
 }
-
 
 void process_page_erase() {
     uint16_t addr = BOOT_PAGE_ADDRESS;
@@ -186,7 +197,7 @@ void process_page_erase() {
         addr -= PAGE_SIZE;
         tspm_page_erase(addr);
     }
-    tspm_page_fill(0, RJMP_OP(BOOT_PAGE_ADDRESS));
+    tspm_page_fill(0, RJMP_BOOT);
     tspm_page_write(0);
 }
 
