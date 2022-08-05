@@ -23,11 +23,6 @@
 #define DEVICE_KEYBOARDIO_MODEL_100
 //#define DEVICE_KEYBOARDIO_MODEL_101
 
-struct recv_result {
-    uint8_t val;
-    uint8_t res;
-};
-
 // globals
 
 // static assertion to check that GPIOR1 and GPIOR2 have sequential addresses
@@ -47,6 +42,9 @@ static inline void staticassert_gpior12() {
 #define crc_lo GPIOR1
 #define crc_val _SFR_WORD(GPIOR1)
 
+#define twi_state GPIOR0
+#define TWS_ERROR 0x01
+
 #if PAGE_SIZE > 256
 #error adjust offset optimizations for larger PAGE_SIZE
 #endif
@@ -60,15 +58,21 @@ void __attribute__ ((noinline)) set_twcr(uint8_t val) {
 
 void init_twi() {
     TWAR = (SLAVE_BASE_ADDRESS | AD01) << 1; // ignore the general call address
-    set_twcr(TWCR_ACK); // activate, ack our address, clear pending events
 }
 
-void wait_for_activity() {
+uint8_t __attribute__ ((noinline)) wait_for_activity(uint8_t ack) {
+    set_twcr(ack);
     loop_until_bit_is_set(TWCR, TWINT);
     wdt_reset();
+    return TWSR;
+}
+
+uint8_t __attribute__ ((noinline)) wait_for_activity_ack() {
+    return wait_for_activity(TWCR_ACK);
 }
 
 void abort_twi() {
+    twi_state |= TWS_ERROR;
     // Recover from error condition by releasing bus lines.
     set_twcr(_BV(TWINT) | _BV(TWSTO) | _BV(TWEN));
 }
@@ -79,41 +83,31 @@ void abort_twi_ack() {
 }
 
 void process_slave_transmit(uint8_t data) {
+    if (twi_state & TWS_ERROR) {
+        return;
+    }
     // Prepare data for transmission.
     TWDR = data;
-    set_twcr(TWCR_ACK);
-    wait_for_activity();
-    if (TWSR != TW_ST_DATA_ACK) {
+    if (wait_for_activity_ack() != TW_ST_DATA_ACK) {
         abort_twi();
     }
 }
 
-struct recv_result slave_receive_byte() {
-    struct recv_result res = { .val = 0, .res = 0 };
-
-    // Receive byte and return ACK.
-    set_twcr(TWCR_ACK);
-    wait_for_activity();
-
-    if (TWSR == TW_SR_DATA_ACK) {
-        res.val = TWDR;
-        res.res = 1;
-    } else {
-        abort_twi();
+uint8_t slave_receive_byte() {
+    if (!(twi_state & TWS_ERROR)) {
+        // Receive byte and return ACK.
+        if (wait_for_activity_ack() != TW_SR_DATA_ACK) {
+            abort_twi();
+        }
     }
-    return res;
+    return TWDR;
 }
 
 // receive two-byte word (little endian) over TWI
 uint16_t slave_receive_word() {
     uint8_t lo;
-    struct recv_result r;
-    r = slave_receive_byte();
-    lo = r.val;
-    if (r.res) {
-        r = slave_receive_byte();
-    }
-    return (r.val << 8) | lo;
+    lo = slave_receive_byte();
+    return (slave_receive_byte() << 8) | lo;
 }
 
 void update_page(uint16_t pageAddress) {
@@ -231,11 +225,10 @@ void transmit_crc16_and_version() {
 
 // Return TWCR_ACK or TWCR_NACK depending on whether we should ACK
 // the next received byte (if any)
-uint8_t process_slave_receive() {
-    struct recv_result r = slave_receive_byte();
-    uint8_t commandCode = r.val;
-    if (!r.res) {
-        return TWCR_ACK;
+void process_slave_receive() {
+    uint8_t commandCode =  slave_receive_byte();
+    if (twi_state & TWS_ERROR) {
+        return;
     }
 
     // Process command byte.
@@ -246,10 +239,12 @@ uint8_t process_slave_receive() {
     case TWI_CMD_PAGEUPDATE_FRAME:
         if (!process_read_frame()) {
             // ACK dummy byte to indicate error
-            return TWCR_ACK;
+            (void)wait_for_activity_ack();
+        } else {
+            // NACK dummy byte to indicate success
+            (void)wait_for_activity(TWCR_NACK);
         }
-        // NACK dummy byte to indicate success
-        return TWCR_NACK;
+        break;
 
     case TWI_CMD_EXECUTEAPP:
         wdt_enable_nointr(WDTO_15MS);  // Set WDT min for cleanup using reset
@@ -267,32 +262,24 @@ uint8_t process_slave_receive() {
     default:
         break;
     }
-    // Default to enabling ACK
-    return TWCR_ACK;
 }
 
 void read_and_process_packet() {
-
-    wait_for_activity();
-
+    twi_state &= ~TWS_ERROR;
     // Check TWI status code for SLA+W or SLA+R.
-    switch (TWSR) {
+    switch (wait_for_activity_ack()) {
     case TW_SR_SLA_ACK:
-        set_twcr(process_slave_receive());
+        process_slave_receive();
         break;
     case TW_ST_SLA_ACK:
         transmit_crc16_and_version();
-        set_twcr(TWCR_ACK);
         break;
 
     case TW_BUS_ERROR:
-        // Clear the bus error condition, but resume ACK
-        abort_twi_ack();
+        abort_twi();
         break;
 
     default:
-        // Default to resume ACK and resume the TWI state machine
-        set_twcr(TWCR_ACK);
         break;
     }
 }
