@@ -306,7 +306,7 @@ void setup_pins() {
 
 // Send a given byte via SPI N times
 void __attribute__ ((noinline)) spi_send_bytes(uint8_t val, uint8_t n) {
-    for (uint8_t i = 0; i < n; i++) {
+    for (uint8_t i = n; i > 0; i--) {
         SPDR = val;
         loop_until_bit_is_set(SPSR, SPIF);
     }
